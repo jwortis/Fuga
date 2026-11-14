@@ -70,7 +70,7 @@ private:
     Track* findTrack (int voiceId) const;
     void loadInstrument (Track&, const std::string& desc, const std::string& state);
     void prepareTrack (Track&);
-    void processChunk (float* const* out, int numOut, int n);
+    void processChunk (float* const* out, int numOut, int offset, int n);
 
     juce::CriticalSection lock; // guards tracks and everything below, shared with the audio thread
     std::vector<std::unique_ptr<Track>> tracks;
@@ -81,6 +81,7 @@ private:
     int blockSize = 512;
     double bpm = 80.0;
     fuga::Tick endTick = 0;
+    fuga::Tick loopStart = 0, loopEnd = 0; // loopEnd <= loopStart means no loop
     int beatsPerBar = 4;
     bool cursorsValid = false, flushNotes = false;
     double clickPhase = 0, clickFreq = 0;

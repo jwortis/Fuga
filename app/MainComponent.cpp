@@ -10,7 +10,7 @@ MainComponent::MainComponent()
     setWantsKeyboardFocus (true);
     getLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, theme::bg);
 
-    for (auto* b : { &playButton, &recordButton, &rewindButton, &metronomeButton, &generateButton, &addVoiceButton, &zoomOut, &zoomIn })
+    for (auto* b : { &loopButton, &playButton, &recordButton, &rewindButton, &metronomeButton, &generateButton, &addVoiceButton, &zoomOut, &zoomIn })
     {
         addAndMakeVisible (*b);
         b->setColour (juce::TextButton::buttonColourId, theme::panel.brighter (0.12f));
@@ -28,6 +28,9 @@ MainComponent::MainComponent()
     metronomeButton.setColour (juce::TextButton::buttonOnColourId, theme::accent.darker (0.3f));
     metronomeButton.setTooltip ("Metronome click during playback and recording");
     metronomeButton.onClick = [this] { engine.setMetronome (metronomeButton.getToggleState()); };
+    loopButton.setColour (juce::TextButton::buttonOnColourId, theme::accent.darker (0.3f));
+    loopButton.setTooltip ("Loop playback over a region (L). Drag along the bar ruler to set the region, or right-click the ruler for more.");
+    loopButton.onClick = [this] { toggleLoop(); };
     generateButton.setTooltip ("Build a full exposition from the selected subject clip: answers, countersubject and free counterpoint in every voice");
     generateButton.onClick = [this] { generateExpositionFromSelection (true); };
     addVoiceButton.onClick = [this] { addVoice(); };
@@ -149,7 +152,9 @@ void MainComponent::resized()
     recordButton.setBounds (bar.removeFromLeft (70));
     bar.removeFromLeft (4);
     metronomeButton.setBounds (bar.removeFromLeft (52));
-    tempoLabel.setBounds (bar.removeFromLeft (52));
+    bar.removeFromLeft (4);
+    loopButton.setBounds (bar.removeFromLeft (52));
+    tempoLabel.setBounds (bar.removeFromLeft (48));
     tempo.setBounds (bar.removeFromLeft (96));
     keyLabel.setBounds (bar.removeFromLeft (36));
     keyBox.setBounds (bar.removeFromLeft (104));
@@ -188,6 +193,7 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 void MainComponent::updateToolbar()
 {
     tempo.setValue (doc.project.bpm, juce::dontSendNotification);
+    loopButton.setToggleState (doc.project.loopOn && doc.project.hasLoop(), juce::dontSendNotification);
     keyBox.setSelectedId (doc.project.key.tonic + (doc.project.key.mode == Mode::Major ? 0 : 12) + 1, juce::dontSendNotification);
     auto* c = doc.clip();
     generateButton.setEnabled (c != nullptr && ! c->notes.empty());
@@ -250,7 +256,10 @@ void MainComponent::togglePlay()
     }
     else
     {
-        if (engine.getPosition() >= doc.project.endTime()) engine.setPosition (0);
+        auto& p = doc.project;
+        const Tick pos = engine.getPosition();
+        if (p.loopOn && p.hasLoop() && (pos < p.loopStart || pos >= p.loopEnd)) engine.setPosition (p.loopStart);
+        else if (pos >= p.endTime()) engine.setPosition (0);
         engine.play();
     }
 }
@@ -314,6 +323,23 @@ void MainComponent::generateExpositionFromSelection (bool tonal)
         doc.undo();
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Generate exposition", result.error);
     }
+}
+
+void MainComponent::toggleLoop()
+{
+    auto& p = doc.project;
+    if (! p.hasLoop())
+    {
+        // No region yet: loop the selected clip, else the section under the playhead, else the first four bars.
+        if (auto* c = doc.clip()) { p.loopStart = c->start; p.loopEnd = c->end(); }
+        else if (auto* s = p.sectionAt (engine.getPosition())) { p.loopStart = s->start; p.loopEnd = s->end(); }
+        else { p.loopStart = 0; p.loopEnd = 4 * p.barLength(); }
+        p.loopOn = true;
+    }
+    else
+        p.loopOn = ! p.loopOn;
+    doc.dirty = true;
+    doc.changed();
 }
 
 void MainComponent::addVoice()
@@ -452,6 +478,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
     {
         m.addItem ("Undo", doc.canUndo(), false, [this] { doc.undo(); });
         m.addItem ("Redo", doc.canRedo(), false, [this] { doc.redo(); });
+        m.addSeparator();
+        m.addItem ("Duplicate clip    Cmd+D", doc.clip() != nullptr, false, [this] { timeline.duplicateSelectedClip(); });
+        m.addItem ("Loop on/off    L", true, doc.project.loopOn && doc.project.hasLoop(), [this] { toggleLoop(); });
     }
     else if (index == 2)
     {
@@ -481,6 +510,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress ('o', cmd, 0)) { open(); return true; }
     if (k == juce::KeyPress ('n', cmd, 0)) { newProject(); return true; }
     if (k == juce::KeyPress ('r', 0, 0)) { record(); return true; }
+    if (k == juce::KeyPress ('l', 0, 0)) { toggleLoop(); return true; }
+    if (k == juce::KeyPress ('d', cmd, 0)) { timeline.duplicateSelectedClip(); return true; }
     if (k == juce::KeyPress ('=', cmd, 0)) { setZoom (doc.pixelsPerBeat * 1.3); return true; }
     if (k == juce::KeyPress ('-', cmd, 0)) { setZoom (doc.pixelsPerBeat / 1.3); return true; }
     return false;
@@ -527,6 +558,17 @@ void MainComponent::selectedRowsChanged (int row)
 
 void MainComponent::runDemo()
 {
+    if (juce::JUCEApplication::getCommandLineParameters().contains ("--loop"))
+    {
+        doc.select (doc.project.voices[1].id, doc.project.voices[1].clips[0].id);
+        timeline.duplicateSelectedClip();
+        doc.project.loopStart = 4 * PPQ;
+        doc.project.loopEnd = 12 * PPQ;
+        doc.project.loopOn = true;
+        doc.changed();
+        doc.dirty = false;
+        return;
+    }
     if (juce::JUCEApplication::getCommandLineParameters().contains ("--locks"))
     {
         // Three locked layers, each filled with its own kind of material, plus one broken answer.

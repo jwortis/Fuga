@@ -87,6 +87,9 @@ struct Project
     std::vector<Voice> voices;
     std::vector<Section> sections;
     int nextId = 1;
+    bool loopOn = false;         // playback cycles over [loopStart, loopEnd)
+    Tick loopStart = 0, loopEnd = 0;
+    bool hasLoop() const { return loopEnd > loopStart; }
 
     int newId() { return nextId++; }
     Tick barLength() const { return PPQ * beatsPerBar; }

@@ -34,6 +34,8 @@ Only the Xcode Command Line Tools and CMake are needed.
 - Double-click a voice lane to create a clip, then click in the piano roll to write notes. Drag to move, drag the right edge to resize, double-click or Delete to remove. Shift or Cmd drag selects several.
 - Right-click a clip to set its role or to generate an answer, a countersubject, or a whole exposition from it.
 - Right-click a layer's name and choose "Lock layer to role" to make it a subject, answer or countersubject layer. A locked layer gives every clip that role, fills new clips with the matching material, and reports any clip that breaks the role in the Fugue check list.
+- Drag along the bar ruler to set a loop region (hold Option for finer steps), and press L or the Loop button to turn looping on and off. Right-click the ruler to loop the selected clip or section.
+- Cmd+D duplicates the selected clip directly after itself.
 - Double-click the Sections row to add a section, right-click to set its type and key. Each type has rules, shown in the Fugue check list.
 - Click a voice's instrument button to pick the built-in organ or a scanned VST3/AU instrument.
 - Record (R) captures a MIDI keyboard into the selected voice. Space plays and stops.

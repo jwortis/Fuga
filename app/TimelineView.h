@@ -22,6 +22,8 @@ public:
     std::function<void()> onManagePlugins;
 
     int preferredHeight() const;
+    /** Copies the selected clip to just after itself and selects the copy. */
+    void duplicateSelectedClip();
     void playheadMoved();
     void resized() override;
     void paint (juce::Graphics&) override;

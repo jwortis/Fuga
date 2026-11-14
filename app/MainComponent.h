@@ -40,6 +40,7 @@ private:
     void save (bool saveAs, std::function<void()> then = {});
     void generateExpositionFromSelection (bool tonal);
     void addVoice();
+    void toggleLoop();
     void showAudioSettings();
     void showPluginManager();
     void setZoom (double pixelsPerBeat);
@@ -54,6 +55,7 @@ private:
     juce::ListBox problems;
     juce::Label problemsTitle, status;
     juce::MidiKeyboardComponent keyboard { engine.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard };
+    juce::TextButton loopButton { "Loop" };
     juce::TextButton playButton { "Play" }, recordButton { "Record" }, rewindButton { "|<" }, metronomeButton { "Click" };
     juce::TextButton generateButton { "Generate exposition" }, addVoiceButton { "+ Voice" }, zoomOut { "-" }, zoomIn { "+" };
     juce::Slider tempo;

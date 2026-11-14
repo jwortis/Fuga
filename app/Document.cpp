@@ -135,6 +135,9 @@ juce::String Document::toJson (const Project& p)
     root->setProperty ("beatsPerBar", p.beatsPerBar);
     root->setProperty ("key", keyToVar (p.key));
     root->setProperty ("nextId", p.nextId);
+    root->setProperty ("loopOn", p.loopOn);
+    root->setProperty ("loopStart", (juce::int64) p.loopStart);
+    root->setProperty ("loopEnd", (juce::int64) p.loopEnd);
 
     juce::Array<juce::var> voices;
     for (auto& v : p.voices)
@@ -199,6 +202,9 @@ bool Document::fromJson (const juce::String& text, Project& p)
     p.bpm = juce::jlimit (20.0, 300.0, (double) root["bpm"]);
     p.beatsPerBar = juce::jlimit (1, 12, (int) root["beatsPerBar"]);
     p.key = keyFromVar (root["key"]);
+    p.loopOn = root["loopOn"];
+    p.loopStart = std::max<Tick> (0, (juce::int64) root["loopStart"]);
+    p.loopEnd = std::max<Tick> (0, (juce::int64) root["loopEnd"]);
     int maxId = 0;
 
     if (auto* voices = root["voices"].getArray())

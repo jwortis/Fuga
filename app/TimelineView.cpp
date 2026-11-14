@@ -300,6 +300,29 @@ public:
             }
         }
 
+        // Loop region
+        if (p.hasLoop())
+        {
+            const int x0 = (int) doc.xForTick (p.loopStart), x1 = (int) doc.xForTick (p.loopEnd);
+            const auto colour = p.loopOn ? theme::accent : theme::textDim;
+            g.setColour (colour.withAlpha (p.loopOn ? 0.75f : 0.3f));
+            g.fillRoundedRectangle ((float) x0, 3.0f, (float) juce::jmax (3, x1 - x0), (float) theme::rulerHeight - 7.0f, 3.0f);
+            if (p.loopOn)
+            {
+                g.setColour (colour.withAlpha (0.06f));
+                g.fillRect (x0, top, x1 - x0, n * theme::laneHeight);
+                g.setColour (colour.withAlpha (0.55f));
+                g.fillRect (x0, theme::rulerHeight, 1, getHeight());
+                g.fillRect (x1 - 1, theme::rulerHeight, 1, getHeight());
+            }
+            for (Tick t = (p.loopStart / bar) * bar; t < p.loopEnd; t += bar * barStep)
+                if (t >= p.loopStart)
+                {
+                    g.setColour (juce::Colours::black.withAlpha (0.8f));
+                    g.drawText (juce::String (t / bar + 1), (int) doc.xForTick (t) + 4, 2, 60, theme::rulerHeight - 4, juce::Justification::centredLeft);
+                }
+        }
+
         // Sections
         for (auto& s : p.sections)
         {
@@ -429,6 +452,7 @@ public:
 
         if (e.y < theme::rulerHeight)
         {
+            if (e.mods.isPopupMenu()) { showLoopMenu(); return; }
             drag = Drag::playhead;
             engine.setPosition (doc.snapRound (downTick, doc.snap));
             return;
@@ -466,7 +490,21 @@ public:
     {
         if (drag == Drag::none) return;
         const Tick now = doc.tickForX (e.x);
-        if (drag == Drag::playhead) { engine.setPosition (doc.snapRound (now, doc.snap)); repaint(); return; }
+        if (drag == Drag::playhead)
+        {
+            // A click in the ruler places the playhead; dragging along it sweeps out a loop region.
+            if (std::abs (e.getDistanceFromDragStartX()) < 5) return;
+            const Tick grid = e.mods.isAltDown() ? doc.snap : PPQ;
+            const Tick a = doc.snapRound (downTick, grid), b = doc.snapRound (now, grid);
+            auto& pr = doc.project;
+            pr.loopStart = std::min (a, b);
+            pr.loopEnd = std::max (a, b);
+            pr.loopOn = pr.hasLoop();
+            doc.dirty = true;
+            if (! engine.isPlaying()) engine.setPosition (pr.loopStart);
+            doc.changed();
+            return;
+        }
         if (! editBegun && std::abs (e.getDistanceFromDragStartX()) < 3 && std::abs (e.getDistanceFromDragStartY()) < 8) return;
         if (! editBegun) { doc.beginEdit(); editBegun = true; }
 
@@ -602,6 +640,57 @@ public:
         {
             if (auto* v = p.findVoice (voiceId)) std::erase_if (v->clips, [clipId] (const Clip& c) { return c.id == clipId; });
         });
+    }
+
+    void duplicateClip (int voiceId, int clipId)
+    {
+        int newId = -1;
+        doc.edit ([&] (Project& p)
+        {
+            auto* vv = p.findVoice (voiceId);
+            auto* cc = vv ? vv->findClip (clipId) : nullptr;
+            if (cc == nullptr) return;
+            Clip copy = *cc;
+            copy.id = newId = p.newId();
+            copy.start = cc->end();
+            vv->clips.push_back (std::move (copy));
+        });
+        if (newId >= 0) doc.select (voiceId, newId);
+    }
+
+    void setLoop (Tick start, Tick end)
+    {
+        doc.project.loopStart = start;
+        doc.project.loopEnd = end;
+        doc.project.loopOn = end > start;
+        doc.dirty = true;
+        doc.changed();
+    }
+
+    void showLoopMenu()
+    {
+        juce::PopupMenu m;
+        juce::Component::SafePointer<Content> safe (this);
+        auto& p = doc.project;
+        m.addItem ("Loop on", p.hasLoop(), p.loopOn, [safe]
+        {
+            if (safe == nullptr) return;
+            safe->doc.project.loopOn = ! safe->doc.project.loopOn;
+            safe->doc.dirty = true;
+            safe->doc.changed();
+        });
+        if (auto* c = doc.clip())
+        {
+            const Tick s = c->start, e = c->end();
+            m.addItem ("Loop the selected clip", true, false, [safe, s, e] { if (safe != nullptr) safe->setLoop (s, e); });
+        }
+        if (auto* sec = p.sectionAt (engine.getPosition()))
+        {
+            const Tick s = sec->start, e = sec->end();
+            m.addItem (juce::String ("Loop the ") + sectionTypeName (sec->type) + " at the playhead", true, false, [safe, s, e] { if (safe != nullptr) safe->setLoop (s, e); });
+        }
+        m.addItem ("Clear loop region", p.hasLoop(), false, [safe] { if (safe != nullptr) safe->setLoop (0, 0); });
+        m.showMenuAsync (juce::PopupMenu::Options());
     }
 
     void showSectionMenu (int sectionId, Tick at)
@@ -750,22 +839,7 @@ public:
             });
         });
         m.addSeparator();
-        m.addItem ("Duplicate", true, false, [safe, voiceId, clipId]
-        {
-            if (safe == nullptr) return;
-            int newId = -1;
-            safe->doc.edit ([&] (Project& p)
-            {
-                auto* vv = p.findVoice (voiceId);
-                auto* cc = vv ? vv->findClip (clipId) : nullptr;
-                if (cc == nullptr) return;
-                Clip copy = *cc;
-                copy.id = newId = p.newId();
-                copy.start = cc->end();
-                vv->clips.push_back (std::move (copy));
-            });
-            safe->doc.select (voiceId, newId);
-        });
+        m.addItem ("Duplicate    Cmd+D", true, false, [safe, voiceId, clipId] { if (safe != nullptr) safe->duplicateClip (voiceId, clipId); });
         m.addItem ("Delete", true, false, [safe, voiceId, clipId] { if (safe != nullptr) safe->deleteClip (voiceId, clipId); });
         m.showMenuAsync (juce::PopupMenu::Options());
     }
@@ -849,3 +923,8 @@ void TimelineView::paint (juce::Graphics& g)
 }
 
 void TimelineView::playheadMoved() { content->repaint(); }
+
+void TimelineView::duplicateSelectedClip()
+{
+    if (doc.clip() != nullptr) content->duplicateClip (doc.selectedVoice, doc.selectedClip);
+}
