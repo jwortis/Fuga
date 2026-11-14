@@ -394,6 +394,9 @@ std::vector<AudioEngine::RecordedNote> AudioEngine::takeRecording()
 
 void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
 {
+    // Scale filter: drop note-ons outside the scale. Note-offs always pass so nothing can hang.
+    if (m.isNoteOn() && (inputMask.load() & (1 << (m.getNoteNumber() % 12))) == 0)
+        return;
     if (m.isNoteOnOrOff())
         keyboardState.processNextMidiEvent (m); // shows on the on-screen keyboard and reaches the collector
     else

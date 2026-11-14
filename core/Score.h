@@ -58,7 +58,9 @@ struct Voice
     const Clip* findClip (int clipId) const { return const_cast<Voice*> (this)->findClip (clipId); }
 };
 
-enum class Mode { Major, Minor };
+/** The scale built on a key's tonic. Major and Minor (natural minor) come first so older files still load. */
+enum class Mode { Major, Minor, HarmonicMinor, MelodicMinor, Dorian, Phrygian, Lydian, Mixolydian, Locrian };
+constexpr int numModes = 9;
 
 struct Key
 {
@@ -90,6 +92,8 @@ struct Project
     bool loopOn = false;         // playback cycles over [loopStart, loopEnd)
     Tick loopStart = 0, loopEnd = 0;
     bool hasLoop() const { return loopEnd > loopStart; }
+    bool scaleLock = false;        // the piano roll only accepts notes of the scale
+    bool midiScaleFilter = false;  // notes outside the scale from a MIDI device are ignored
 
     int newId() { return nextId++; }
     Tick barLength() const { return PPQ * beatsPerBar; }

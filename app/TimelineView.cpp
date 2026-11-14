@@ -4,15 +4,16 @@ using namespace fuga;
 
 void addKeyItems (juce::PopupMenu& menu, Key current, std::function<void (Key)> choose)
 {
-    for (auto mode : { Mode::Major, Mode::Minor })
+    for (int mi = 0; mi < numModes; ++mi)
     {
+        const auto mode = (Mode) mi;
         juce::PopupMenu sub;
         for (int pc = 0; pc < 12; ++pc)
         {
             Key k { pc, mode };
             sub.addItem (keyName (k), true, k == current, [choose, k] { choose (k); });
         }
-        menu.addSubMenu (mode == Mode::Major ? "Major" : "Minor", sub);
+        menu.addSubMenu (juce::String (modeName (mode)).substring (0, 1).toUpperCase() + juce::String (modeName (mode)).substring (1), sub, true, nullptr, current.mode == mode);
     }
 }
 

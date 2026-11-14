@@ -74,7 +74,7 @@ double melodicCost (int p0, int p1, Key key)
     int d = std::abs (p1 - p0);
     double cost = d == 0 ? 3 : d <= 2 ? 0 : d <= 4 ? 1.5 : d == 5 ? 2.5 : d == 7 ? 3.5 : d == 12 ? 4.5 : (d == 8 || d == 9) ? 6 : 20;
     if (d == 6) cost = 18;
-    if (key.mode == Mode::Minor)
+    if (isMinorMode (key.mode))
     {
         int r0 = relPc (p0, key), r1 = relPc (p1, key);
         if (r0 == 11 && p1 - p0 != 1) cost += 6;                  // leading note wants to rise
@@ -114,7 +114,7 @@ std::vector<Note> generateLine (const Project& project, int voiceId, Tick start,
     auto slots = makeRhythm (ctx, start, length, grid, rng);
 
     std::vector<int> pitches;
-    for (int p = voice.low; p <= voice.high; ++p) if (inScale (p, key)) pitches.push_back (p);
+    for (int p = voice.low; p <= voice.high; ++p) if (inCounterpointScale (p, key)) pitches.push_back (p);
     if (pitches.empty() || slots.empty()) return {};
 
     const size_t N = slots.size(), P = pitches.size();

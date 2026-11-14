@@ -34,6 +34,8 @@ public:
 
     void select (int voiceId, int clipId);
     fuga::Voice* voice() { return project.findVoice (selectedVoice); }
+    /** The key that applies to the clip being edited (its section's key, else the project key). */
+    fuga::Key editKey() { auto* c = clip(); return c ? project.keyAt (c->start) : project.key; }
     fuga::Clip* clip() { auto* v = voice(); return v ? v->findClip (selectedClip) : nullptr; }
 
     bool canUndo() const { return ! undoStack.empty(); }

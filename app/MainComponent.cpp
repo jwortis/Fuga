@@ -10,7 +10,7 @@ MainComponent::MainComponent()
     setWantsKeyboardFocus (true);
     getLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, theme::bg);
 
-    for (auto* b : { &loopButton, &playButton, &recordButton, &rewindButton, &metronomeButton, &generateButton, &addVoiceButton, &zoomOut, &zoomIn })
+    for (auto* b : { &scaleLockButton, &midiFilterButton, &loopButton, &playButton, &recordButton, &rewindButton, &metronomeButton, &generateButton, &addVoiceButton, &zoomOut, &zoomIn })
     {
         addAndMakeVisible (*b);
         b->setColour (juce::TextButton::buttonColourId, theme::panel.brighter (0.12f));
@@ -63,16 +63,31 @@ MainComponent::MainComponent()
     };
 
     addAndMakeVisible (keyBox);
-    for (int i = 0; i < 24; ++i)
-        keyBox.addItem (keyName ({ i % 12, i < 12 ? Mode::Major : Mode::Minor }), i + 1);
-    keyBox.setWantsKeyboardFocus (false);
-    keyBox.onChange = [this]
+    addAndMakeVisible (scaleBox);
+    for (int i = 0; i < 12; ++i) keyBox.addItem (noteName (i), i + 1);
+    for (int i = 0; i < numModes; ++i)
+        scaleBox.addItem (juce::String (modeName ((Mode) i)).substring (0, 1).toUpperCase() + juce::String (modeName ((Mode) i)).substring (1), i + 1);
+    keyBox.setTooltip ("Tonic of the song's key");
+    scaleBox.setTooltip ("Scale of the song's key");
+    for (auto* box : { &keyBox, &scaleBox })
     {
-        const int i = keyBox.getSelectedId() - 1;
-        if (i < 0) return;
-        Key k { i % 12, i < 12 ? Mode::Major : Mode::Minor };
-        if (! (k == doc.project.key)) doc.edit ([&] (Project& p) { p.key = k; });
-    };
+        box->setWantsKeyboardFocus (false);
+        box->onChange = [this]
+        {
+            if (keyBox.getSelectedId() < 1 || scaleBox.getSelectedId() < 1) return;
+            Key k { keyBox.getSelectedId() - 1, (Mode) (scaleBox.getSelectedId() - 1) };
+            if (! (k == doc.project.key)) doc.edit ([&] (Project& p) { p.key = k; });
+        };
+    }
+    for (auto* b : { &scaleLockButton, &midiFilterButton })
+    {
+        b->setClickingTogglesState (true);
+        b->setColour (juce::TextButton::buttonOnColourId, theme::accent.darker (0.3f));
+    }
+    scaleLockButton.setTooltip ("Disable piano roll rows that are not in the scale, so notes can only be written and moved onto scale notes");
+    scaleLockButton.onClick = [this] { doc.edit ([&] (Project& p) { p.scaleLock = scaleLockButton.getToggleState(); }); };
+    midiFilterButton.setTooltip ("Ignore notes from your MIDI keyboard that are not in the scale");
+    midiFilterButton.onClick = [this] { doc.edit ([&] (Project& p) { p.midiScaleFilter = midiFilterButton.getToggleState(); }); };
 
     addAndMakeVisible (snapBox);
     for (int i = 0; i < 6; ++i) snapBox.addItem (snapNames[i], i + 1);
@@ -123,7 +138,7 @@ MainComponent::MainComponent()
     engine.syncProject (doc.project);
     engine.setLiveVoice (doc.selectedVoice);
     updateToolbar();
-    setSize (1320, 860);
+    setSize (1440, 880);
     startTimerHz (30);
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (this);
@@ -156,11 +171,17 @@ void MainComponent::resized()
     loopButton.setBounds (bar.removeFromLeft (52));
     tempoLabel.setBounds (bar.removeFromLeft (48));
     tempo.setBounds (bar.removeFromLeft (96));
-    keyLabel.setBounds (bar.removeFromLeft (36));
-    keyBox.setBounds (bar.removeFromLeft (104));
-    snapLabel.setBounds (bar.removeFromLeft (42));
-    snapBox.setBounds (bar.removeFromLeft (112));
-    zoomLabel.setBounds (bar.removeFromLeft (46));
+    keyLabel.setBounds (bar.removeFromLeft (32));
+    keyBox.setBounds (bar.removeFromLeft (62));
+    bar.removeFromLeft (3);
+    scaleBox.setBounds (bar.removeFromLeft (142));
+    bar.removeFromLeft (4);
+    scaleLockButton.setBounds (bar.removeFromLeft (82));
+    bar.removeFromLeft (3);
+    midiFilterButton.setBounds (bar.removeFromLeft (84));
+    snapLabel.setBounds (bar.removeFromLeft (40));
+    snapBox.setBounds (bar.removeFromLeft (104));
+    zoomLabel.setBounds (bar.removeFromLeft (44));
     zoomOut.setBounds (bar.removeFromLeft (28));
     bar.removeFromLeft (2);
     zoomIn.setBounds (bar.removeFromLeft (28));
@@ -194,7 +215,10 @@ void MainComponent::updateToolbar()
 {
     tempo.setValue (doc.project.bpm, juce::dontSendNotification);
     loopButton.setToggleState (doc.project.loopOn && doc.project.hasLoop(), juce::dontSendNotification);
-    keyBox.setSelectedId (doc.project.key.tonic + (doc.project.key.mode == Mode::Major ? 0 : 12) + 1, juce::dontSendNotification);
+    keyBox.setSelectedId (doc.project.key.tonic + 1, juce::dontSendNotification);
+    scaleBox.setSelectedId ((int) doc.project.key.mode + 1, juce::dontSendNotification);
+    scaleLockButton.setToggleState (doc.project.scaleLock, juce::dontSendNotification);
+    midiFilterButton.setToggleState (doc.project.midiScaleFilter, juce::dontSendNotification);
     auto* c = doc.clip();
     generateButton.setEnabled (c != nullptr && ! c->notes.empty());
 
@@ -237,6 +261,8 @@ void MainComponent::timerCallback()
 
     const Tick t = engine.getPosition();
     const Tick bar = doc.project.barLength();
+    // The MIDI filter follows the key in force at the playhead (a section may be in another key).
+    engine.setInputScaleMask (doc.project.midiScaleFilter ? scaleMask (doc.project.keyAt (t)) : 0xfff);
     auto midi = engine.midiInputNames();
     status.setText ("Bar " + juce::String (t / bar + 1) + ", beat " + juce::String ((t % bar) / PPQ + 1)
                         + "      MIDI in: " + (midi.isEmpty() ? juce::String ("none connected (click the on-screen keyboard to play)") : midi.joinIntoString (", "))
@@ -558,6 +584,13 @@ void MainComponent::selectedRowsChanged (int row)
 
 void MainComponent::runDemo()
 {
+    if (juce::JUCEApplication::getCommandLineParameters().contains ("--scale"))
+    {
+        doc.select (doc.project.voices[1].id, doc.project.voices[1].clips[0].id);
+        doc.edit ([&] (Project& p) { p.key.mode = Mode::HarmonicMinor; p.scaleLock = true; p.midiScaleFilter = true; });
+        doc.dirty = false;
+        return;
+    }
     if (juce::JUCEApplication::getCommandLineParameters().contains ("--loop"))
     {
         doc.select (doc.project.voices[1].id, doc.project.voices[1].clips[0].id);

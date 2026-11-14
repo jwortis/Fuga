@@ -112,17 +112,21 @@ Project Document::makeDefaultProject()
 static const char* const roleIds[] = { "subject", "answer", "countersubject", "free" };
 static const char* const sectionIds[] = { "exposition", "episode", "middleEntry", "stretto", "pedal", "coda" };
 
+static const char* const modeIds[] = { "major", "minor", "harmonicMinor", "melodicMinor", "dorian", "phrygian", "lydian", "mixolydian", "locrian" };
+
 static juce::var keyToVar (Key k)
 {
     auto* o = new juce::DynamicObject();
     o->setProperty ("tonic", k.tonic);
-    o->setProperty ("mode", k.mode == Mode::Major ? "major" : "minor");
+    o->setProperty ("mode", modeIds[(int) k.mode]);
     return o;
 }
 
 static Key keyFromVar (const juce::var& v)
 {
-    return { juce::jlimit (0, 11, (int) v["tonic"]), v["mode"].toString() == "major" ? Mode::Major : Mode::Minor };
+    Mode mode = Mode::Minor;
+    for (int i = 0; i < numModes; ++i) if (v["mode"].toString() == modeIds[i]) mode = (Mode) i;
+    return { juce::jlimit (0, 11, (int) v["tonic"]), mode };
 }
 
 juce::String Document::toJson (const Project& p)
@@ -135,6 +139,8 @@ juce::String Document::toJson (const Project& p)
     root->setProperty ("beatsPerBar", p.beatsPerBar);
     root->setProperty ("key", keyToVar (p.key));
     root->setProperty ("nextId", p.nextId);
+    root->setProperty ("scaleLock", p.scaleLock);
+    root->setProperty ("midiScaleFilter", p.midiScaleFilter);
     root->setProperty ("loopOn", p.loopOn);
     root->setProperty ("loopStart", (juce::int64) p.loopStart);
     root->setProperty ("loopEnd", (juce::int64) p.loopEnd);
@@ -203,6 +209,8 @@ bool Document::fromJson (const juce::String& text, Project& p)
     p.beatsPerBar = juce::jlimit (1, 12, (int) root["beatsPerBar"]);
     p.key = keyFromVar (root["key"]);
     p.loopOn = root["loopOn"];
+    p.scaleLock = root["scaleLock"];
+    p.midiScaleFilter = root["midiScaleFilter"];
     p.loopStart = std::max<Tick> (0, (juce::int64) root["loopStart"]);
     p.loopEnd = std::max<Tick> (0, (juce::int64) root["loopEnd"]);
     int maxId = 0;

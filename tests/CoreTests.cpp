@@ -143,12 +143,31 @@ int main()
         c.notes = generateLine (p, p.voices[2].id, 0, 8 * PPQ, { seed, PPQ / 2, true });
         CHECK (! c.notes.empty());
         Tick covered = 0;
-        for (auto& n : c.notes) { covered += n.length; CHECK (inScale (n.pitch, p.key)); CHECK (n.pitch >= 48 && n.pitch <= 67); }
+        for (auto& n : c.notes) { covered += n.length; CHECK (inCounterpointScale (n.pitch, p.key)); CHECK (n.pitch >= 48 && n.pitch <= 67); }
         CHECK (covered == 8 * PPQ);
         p.voices[2].clips.push_back (c);
         auto vs = checkProject (p);
         CHECK (count (vs, "Parallel fifths") + count (vs, "Parallel octaves") == 0);
         CHECK (count (vs, "Voice crossing") == 0);
+    }
+
+    // --- Scales ---
+    {
+        Key dMinor { 2, Mode::Minor }, dHarmonic { 2, Mode::HarmonicMinor }, dDorian { 2, Mode::Dorian };
+        CHECK (inScale (60, dMinor) && ! inScale (61, dMinor));      // C natural yes, C# no
+        CHECK (! inScale (60, dHarmonic) && inScale (61, dHarmonic)); // the leading note replaces it
+        CHECK (inScale (59, dDorian) && ! inScale (58, dDorian));    // raised sixth
+        CHECK (inCounterpointScale (60, dMinor) && inCounterpointScale (61, dMinor));
+        CHECK (keyName (dHarmonic) == "D harmonic minor");
+        for (int m = 0; m < numModes; ++m)
+        {
+            int count = 0;
+            for (int pc = 0; pc < 12; ++pc) count += inScale (pc, { 0, (Mode) m });
+            CHECK (count == 7);
+        }
+        CHECK (scaleMask ({ 0, Mode::Major }) == 0b101010110101);
+        CHECK (snapToScale (61, dMinor, 0) == 60 && snapToScale (61, dMinor, 1) == 62 && snapToScale (62, dMinor, 1) == 62);
+        CHECK (scaleStep (62, dMinor, 1) == 64 && scaleStep (62, dMinor, -1) == 60 && scaleStep (61, dMinor, 1) == 62);
     }
 
     // --- Layer locks ---

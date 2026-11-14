@@ -38,6 +38,8 @@ public:
     /** The voice that live MIDI input plays. */
     void setLiveVoice (int voiceId) { liveVoice.store (voiceId); }
     void setMetronome (bool on) { metronome.store (on); }
+    /** Pitch classes accepted from MIDI devices (bit 0 = C). Pass 0xfff to let everything through. */
+    void setInputScaleMask (int mask) { inputMask.store (mask); }
 
     juce::String instrumentName (int voiceId) const;
     bool hasPlugin (int voiceId) const;
@@ -89,7 +91,7 @@ private:
 
     std::atomic<bool> playing { false }, recording { false }, metronome { false };
     std::atomic<double> position { 0.0 };
-    std::atomic<int> liveVoice { -1 };
+    std::atomic<int> liveVoice { -1 }, inputMask { 0xfff };
 
     struct RecEvent { double tick; int pitch, velocity; bool on; };
     juce::AbstractFifo recFifo { 8192 };

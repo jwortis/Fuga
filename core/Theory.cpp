@@ -9,7 +9,15 @@ const char* noteName (int pc) { return names[((pc % 12) + 12) % 12]; }
 
 std::string pitchName (int p) { return std::string (noteName (p)) + std::to_string (p / 12 - 1); }
 
-std::string keyName (Key k) { return std::string (noteName (k.tonic)) + (k.mode == Mode::Major ? " major" : " minor"); }
+std::string keyName (Key k) { return std::string (noteName (k.tonic)) + " " + modeName (k.mode); }
+
+const char* modeName (Mode m)
+{
+    static const char* const n[numModes] = { "major", "minor", "harmonic minor", "melodic minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian" };
+    return n[(int) m];
+}
+
+bool isMinorMode (Mode m) { return m == Mode::Minor || m == Mode::HarmonicMinor || m == Mode::MelodicMinor; }
 
 const char* roleName (Role r)
 {
@@ -39,9 +47,50 @@ const char* sectionTypeName (SectionType t)
 
 bool inScale (int pitch, Key k)
 {
-    static const bool major[12] = { 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1 };
-    static const bool minor[12] = { 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1 }; // natural + raised 7th
-    return (k.mode == Mode::Major ? major : minor)[relPc (pitch, k)];
+    //                                         C  .  D  .  E  F  .  G  .  A  .  B   (relative to the tonic)
+    static const bool scales[numModes][12] = { { 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1 },   // major
+                                               { 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0 },   // natural minor
+                                               { 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1 },   // harmonic minor
+                                               { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1 },   // melodic minor (ascending)
+                                               { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0 },   // dorian
+                                               { 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0 },   // phrygian
+                                               { 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1 },   // lydian
+                                               { 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0 },   // mixolydian
+                                               { 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0 } }; // locrian
+    return scales[(int) k.mode][relPc (pitch, k)];
+}
+
+bool inCounterpointScale (int pitch, Key k)
+{
+    if (! isMinorMode (k.mode)) return inScale (pitch, k);
+    static const bool minor[12] = { 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1 }; // natural minor plus the leading note
+    return minor[relPc (pitch, k)];
+}
+
+int scaleMask (Key k)
+{
+    int mask = 0;
+    for (int pc = 0; pc < 12; ++pc) if (inScale (pc, k)) mask |= 1 << pc;
+    return mask;
+}
+
+int snapToScale (int pitch, Key k, int direction)
+{
+    for (int d = 0; d < 12; ++d)
+    {
+        const int first = direction > 0 ? pitch + d : pitch - d, second = direction > 0 ? pitch - d : pitch + d;
+        if (inScale (first, k)) return first;
+        if (inScale (second, k)) return second;
+    }
+    return pitch;
+}
+
+int scaleStep (int pitch, Key k, int direction)
+{
+    const int step = direction > 0 ? 1 : -1;
+    for (int p = pitch + step; std::abs (p - pitch) <= 12; p += step)
+        if (inScale (p, k)) return p;
+    return pitch;
 }
 
 bool isDissonant (int interval)
