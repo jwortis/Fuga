@@ -286,6 +286,7 @@ void MainComponent::stopAndCollectRecording()
         Clip c;
         c.id = newId = p.newId();
         c.role = hasSubject ? Role::Free : Role::Subject;
+        if (auto* lv = p.findVoice (voiceId); lv != nullptr && lv->lock) c.role = *lv->lock;
         c.start = (first / bar) * bar;
         c.length = std::max (bar, ((last - c.start + bar - 1) / bar) * bar);
         for (auto& n : recorded) c.notes.push_back ({ n.start - c.start, n.length, n.pitch, juce::jlimit (1, 127, n.velocity) });
@@ -526,6 +527,33 @@ void MainComponent::selectedRowsChanged (int row)
 
 void MainComponent::runDemo()
 {
+    if (juce::JUCEApplication::getCommandLineParameters().contains ("--locks"))
+    {
+        // Three locked layers, each filled with its own kind of material, plus one broken answer.
+        doc.edit ([&] (Project& p)
+        {
+            p.voices[1].lock = Role::Subject;
+            p.voices[0].lock = Role::Answer;
+            p.voices[2].lock = Role::Countersubject;
+            auto add = [&] (size_t vi, Tick start, bool spoil)
+            {
+                Clip c;
+                c.id = p.newId();
+                c.role = *p.voices[vi].lock;
+                c.start = start;
+                c.length = 8 * PPQ;
+                c.notes = lockedLayerMaterial (p, p.voices[vi].id, c.role, c.start, c.length, 5);
+                if (spoil) c.notes[4].pitch += 2;
+                p.voices[vi].clips.push_back (c);
+            };
+            add (0, 8 * PPQ, false);
+            add (2, 8 * PPQ, false);
+            add (1, 16 * PPQ, false);
+            add (0, 24 * PPQ, true);
+        });
+        doc.dirty = false;
+        return;
+    }
     for (auto& v : doc.project.voices)
         for (auto& c : v.clips)
             if (c.role == Role::Subject)

@@ -196,9 +196,31 @@ std::vector<Note> generateLine (const Project& project, int voiceId, Tick start,
     return merged;
 }
 
+std::vector<Note> lockedLayerMaterial (const Project& p, int voiceId, Role lock, Tick start, Tick& length, unsigned seed)
+{
+    const Voice* v = p.findVoice (voiceId);
+    if (v == nullptr) return {};
+    if (lock == Role::Subject || lock == Role::Answer)
+    {
+        const Clip* subject = referenceSubject (p);
+        if (subject == nullptr) return {};
+        length = subject->length;
+        auto notes = lock == Role::Subject ? subject->notes : makeAnswer (subject->notes, p.keyAt (subject->start), true);
+        return fitToRange (std::move (notes), v->low, v->high);
+    }
+    return generateLine (p, voiceId, start, length, { seed, PPQ / 2, lock == Role::Countersubject });
+}
+
 ExpositionResult generateExposition (Project& p, int subjectVoiceId, int subjectClipId, bool tonalAnswer, unsigned seed)
 {
     ExpositionResult result;
+    for (auto& v : p.voices)
+        if (v.lock)
+        {
+            result.error = v.name + " is locked to " + roleName (*v.lock) + ". In an exposition every voice moves from subject or answer "
+                           "on to the countersubject, so unlock the layers first (right-click a layer name).";
+            return result;
+        }
     Voice* sv = p.findVoice (subjectVoiceId);
     Clip* sc = sv ? sv->findClip (subjectClipId) : nullptr;
     if (sc == nullptr || sc->notes.empty()) { result.error = "Select a clip that contains the subject first."; return result; }

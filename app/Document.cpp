@@ -149,6 +149,7 @@ juce::String Document::toJson (const Project& p)
         vo->setProperty ("gain", v.gain);
         vo->setProperty ("instrument", juce::String (v.instrumentDesc));
         vo->setProperty ("instrumentState", juce::String (v.instrumentState));
+        vo->setProperty ("lock", v.lock ? roleIds[(int) *v.lock] : "");
         juce::Array<juce::var> clips;
         for (auto& c : v.clips)
         {
@@ -213,6 +214,7 @@ bool Document::fromJson (const juce::String& text, Project& p)
             v.gain = (float) (double) vv["gain"];
             v.instrumentDesc = vv["instrument"].toString().toStdString();
             v.instrumentState = vv["instrumentState"].toString().toStdString();
+            if (auto lock = vv["lock"].toString(); lock.isNotEmpty()) v.lock = (Role) indexOfId (roleIds, lock);
             maxId = std::max (maxId, v.id);
             if (auto* clips = vv["clips"].getArray())
                 for (auto& cv : *clips)

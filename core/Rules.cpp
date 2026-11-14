@@ -215,6 +215,59 @@ void checkSection (const Project& p, const Section& s, const std::vector<std::ve
         }
     }
 }
+void checkLocks (const Project& p, std::vector<Violation>& out)
+{
+    const Clip* subject = referenceSubject (p);
+    for (auto& v : p.voices)
+    {
+        if (! v.lock) continue;
+        const Role lock = *v.lock;
+        const std::string layer = v.name + " is locked to " + roleName (lock);
+        const Clip* firstCs = nullptr;
+        for (auto& c : v.clips)
+            if (lock == Role::Countersubject && ! c.notes.empty() && (firstCs == nullptr || c.start < firstCs->start)) firstCs = &c;
+
+        for (auto& c : v.clips)
+        {
+            auto add = [&] (Severity sev, const std::string& msg)
+            {
+                out.push_back ({ sev, "Layer lock", layer + ", but " + msg, c.start, c.length, v.id, -1, -1 });
+            };
+            const std::string where = "the clip at bar " + std::to_string (c.start / p.barLength() + 1);
+            if (c.role != lock) { add (Severity::Warning, where + " is marked " + roleName (c.role) + "."); continue; }
+            if (c.notes.empty()) continue;
+
+            if (lock == Role::Subject && subject != nullptr && &c != subject && ! sameShape (subject->notes, c.notes, true))
+                add (Severity::Warning, where + " is not a statement of the subject (same notes, any octave).");
+
+            if (lock == Role::Answer)
+            {
+                if (subject == nullptr)
+                    add (Severity::Warning, "there is no subject yet for it to answer.");
+                else
+                {
+                    const Key key = p.keyAt (subject->start);
+                    if (! sameShape (makeAnswer (subject->notes, key, true), c.notes, true)
+                        && ! sameShape (makeAnswer (subject->notes, key, false), c.notes, true))
+                        add (Severity::Warning, where + " is not a real or tonal answer to the subject.");
+                }
+            }
+
+            if (lock == Role::Countersubject)
+            {
+                bool againstEntry = false;
+                for (auto& other : p.voices)
+                    if (other.id != v.id)
+                        for (auto& e : other.clips)
+                            againstEntry = againstEntry || (e.isEntry() && e.start < c.end() && e.end() > c.start);
+                if (! againstEntry)
+                    add (Severity::Warning, where + " has no subject or answer sounding against it in another voice.");
+                if (firstCs != nullptr && &c != firstCs && ! sameShape (firstCs->notes, c.notes, false))
+                    add (Severity::Info, where + " differs from the layer's first countersubject. A countersubject normally returns unchanged apart from transposition.");
+            }
+        }
+    }
+}
 } // namespace
 
 std::vector<Violation> checkProject (const Project& p)
@@ -225,6 +278,7 @@ std::vector<Violation> checkProject (const Project& p)
 
     checkCounterpoint (p, flat, out);
     for (auto& s : p.sections) checkSection (p, s, flat, out);
+    checkLocks (p, out);
 
     std::stable_sort (out.begin(), out.end(), [] (const Violation& a, const Violation& b) { return a.time < b.time; });
     return out;

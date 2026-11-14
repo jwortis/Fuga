@@ -62,6 +62,29 @@ std::vector<Note> transposed (std::vector<Note> notes, int semitones)
     return notes;
 }
 
+const Clip* referenceSubject (const Project& p)
+{
+    const Clip* best = nullptr;
+    for (auto& v : p.voices)
+        for (auto& c : v.clips)
+            if (c.role == Role::Subject && ! c.notes.empty() && (best == nullptr || c.start < best->start))
+                best = &c;
+    return best;
+}
+
+bool sameShape (std::vector<Note> a, std::vector<Note> b, bool octavesOnly)
+{
+    if (a.size() != b.size() || a.empty()) return false;
+    auto byStart = [] (const Note& x, const Note& y) { return x.start != y.start ? x.start < y.start : x.pitch < y.pitch; };
+    std::sort (a.begin(), a.end(), byStart);
+    std::sort (b.begin(), b.end(), byStart);
+    const int shift = b[0].pitch - a[0].pitch;
+    if (octavesOnly && shift % 12 != 0) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (a[i].start != b[i].start || a[i].length != b[i].length || b[i].pitch - a[i].pitch != shift) return false;
+    return true;
+}
+
 std::vector<Note> makeAnswer (const std::vector<Note>& subject, Key key, bool tonal)
 {
     auto out = subject;

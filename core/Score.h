@@ -2,6 +2,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,9 @@ struct Voice
     float gain = 0.8f;
     std::string instrumentDesc;  // opaque: empty = built-in synth, else plugin description XML
     std::string instrumentState; // opaque: base64 plugin state
+    /** Role lock: when set, every clip in this layer has this role and must obey its constraint
+        (a subject layer only holds statements of the subject, an answer layer only answers, and so on). */
+    std::optional<Role> lock;
     std::vector<Clip> clips;
 
     Clip* findClip (int clipId)

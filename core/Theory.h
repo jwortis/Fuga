@@ -28,6 +28,13 @@ std::vector<Note> makeAnswer (const std::vector<Note>& subject, Key key, bool to
 
 std::vector<Note> transposed (std::vector<Note> notes, int semitones);
 
+/** The clip that defines the fugue's subject: the earliest subject clip that has notes. */
+const Clip* referenceSubject (const Project&);
+
+/** True if both lines have the same rhythm and differ only by a constant transposition.
+    With octavesOnly, that transposition must be a whole number of octaves. */
+bool sameShape (std::vector<Note> a, std::vector<Note> b, bool octavesOnly);
+
 /** Shifts the notes by whole octaves so they sit as well as possible inside [low, high]. */
 std::vector<Note> fitToRange (std::vector<Note> notes, int low, int high);
 } // namespace fuga

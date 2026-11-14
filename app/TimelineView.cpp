@@ -82,12 +82,15 @@ public:
         solo.setToggleState (v->solo, juce::dontSendNotification);
         gain.setValue (v->gain, juce::dontSendNotification);
         instrument.setButtonText (owner.engine.instrumentName (voiceId));
+        resized();
         repaint();
     }
 
     void resized() override
     {
-        name.setBounds (12, 5, getWidth() - 12 - 58, 24);
+        auto* v = owner.doc.project.findVoice (voiceId);
+        const int badge = v != nullptr && v->lock ? badgeWidth : 0;
+        name.setBounds (12, 5, getWidth() - 12 - 60 - badge, 24);
         solo.setBounds (getWidth() - 30, 6, 24, 22);
         mute.setBounds (getWidth() - 56, 6, 24, 22);
         instrument.setBounds (12, 34, getWidth() - 12 - 62, 22);
@@ -100,6 +103,21 @@ public:
         g.fillAll (selected ? theme::panel.brighter (0.12f) : theme::panel);
         g.setColour (theme::voice (owner.doc.project.voiceIndex (voiceId)));
         g.fillRect (0, 0, selected ? 6 : 4, getHeight());
+        if (auto* v = owner.doc.project.findVoice (voiceId); v != nullptr && v->lock)
+        {
+            // Lock badge: this layer only holds material of one role.
+            auto b = juce::Rectangle<int> (getWidth() - 58 - badgeWidth, 8, badgeWidth - 4, 18).toFloat();
+            g.setColour (theme::role (*v->lock));
+            g.fillRoundedRectangle (b, 4.0f);
+            g.setColour (juce::Colours::black.withAlpha (0.85f));
+            // a small padlock
+            const float lx = b.getX() + 5.0f, ly = b.getY() + 8.0f;
+            g.fillRoundedRectangle (lx, ly, 8.0f, 6.5f, 1.0f);
+            g.drawEllipse (lx + 1.5f, ly - 4.0f, 5.0f, 7.0f, 1.4f);
+            g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+            const char* text = *v->lock == Role::Countersubject ? "CS" : *v->lock == Role::Subject ? "Subj" : *v->lock == Role::Answer ? "Ans" : "Free";
+            g.drawText (text, b.withTrimmedLeft (15.0f), juce::Justification::centred);
+        }
         g.setColour (theme::bg);
         g.fillRect (0, getHeight() - 1, getWidth(), 1);
     }
@@ -111,6 +129,7 @@ public:
     }
 
     const int voiceId;
+    static constexpr int badgeWidth = 48;
 
 private:
     void showInstrumentMenu()
@@ -161,6 +180,26 @@ private:
                 docPtr->edit ([&] (Project& p) { if (auto* vv = p.findVoice (id)) { vv->low = pr.low; vv->high = pr.high; } });
             });
         }
+        juce::PopupMenu lock;
+        {
+            auto* v = docPtr->project.findVoice (id);
+            auto setLock = [docPtr, id] (std::optional<Role> r)
+            {
+                docPtr->edit ([&] (Project& p)
+                {
+                    if (auto* vv = p.findVoice (id))
+                    {
+                        vv->lock = r;
+                        if (r) for (auto& c : vv->clips) c.role = *r; // everything in a locked layer takes its role
+                    }
+                });
+            };
+            lock.addItem ("Unlocked (clips choose their own role)", true, v != nullptr && ! v->lock, [setLock] { setLock ({}); });
+            lock.addSeparator();
+            for (auto r : { Role::Subject, Role::Answer, Role::Countersubject })
+                lock.addItem (roleName (r), true, v != nullptr && v->lock == r, [setLock, r] { setLock (r); });
+        }
+        m.addSubMenu ("Lock layer to role", lock);
         m.addSubMenu ("Range", range);
         const int index = docPtr->project.voiceIndex (id);
         const int n = (int) docPtr->project.voices.size();
@@ -226,6 +265,11 @@ public:
         {
             g.setColour (p.voices[(size_t) i].id == doc.selectedVoice ? theme::laneAlt.brighter (0.06f) : (i % 2 ? theme::laneAlt : theme::lane));
             g.fillRect (clip.getX(), top + i * theme::laneHeight, clip.getWidth(), theme::laneHeight - 1);
+            if (p.voices[(size_t) i].lock)
+            {
+                g.setColour (theme::role (*p.voices[(size_t) i].lock).withAlpha (0.09f));
+                g.fillRect (clip.getX(), top + i * theme::laneHeight, clip.getWidth(), theme::laneHeight - 1);
+            }
         }
 
         // Sections tint the lanes beneath them.
@@ -446,6 +490,7 @@ public:
                     Clip moved = *c;
                     std::erase_if (v->clips, [&] (const Clip& x) { return x.id == moved.id; });
                     auto& target = p.voices[(size_t) lane];
+                    if (target.lock) moved.role = *target.lock;
                     target.clips.push_back (moved);
                     doc.selectedVoice = target.id;
                     doc.selectedClip = moved.id;
@@ -537,7 +582,15 @@ public:
                     for (auto& o : vv.clips)
                         if (at >= o.start && at < o.end()) { lo = lo < 0 ? o.start : std::min (lo, o.start); hi = std::max (hi, o.end()); }
             if (lo >= 0) { c.start = lo; c.length = hi - lo; }
-            if (generate) c.notes = generateLine (p, voiceId, c.start, c.length, { newSeed(), std::min (doc.snap * 2, PPQ / 2), false });
+            if (v->lock)
+            {
+                // A locked layer writes its own kind of material.
+                c.role = *v->lock;
+                if (c.role != Role::Countersubject) { c.start = doc.snapFloor (at, p.barLength()); c.length = 2 * p.barLength(); }
+                if (c.role != Role::Countersubject || generate)
+                    c.notes = lockedLayerMaterial (p, voiceId, c.role, c.start, c.length, newSeed());
+            }
+            else if (generate) c.notes = generateLine (p, voiceId, c.start, c.length, { newSeed(), std::min (doc.snap * 2, PPQ / 2), false });
             v->clips.push_back (std::move (c));
         });
         doc.select (voiceId, newId);
@@ -605,7 +658,22 @@ public:
             {
                 if (safe != nullptr) safe->doc.edit ([&] (Project& p) { if (auto* cc = p.findVoice (voiceId)->findClip (clipId)) cc->role = r; });
             });
-        m.addSubMenu ("Role", role);
+        m.addSubMenu (v->lock ? "Role (layer is locked)" : "Role", role, ! v->lock);
+        if (v->lock && *v->lock != Role::Countersubject)
+            m.addItem (juce::String ("Reset to match the ") + (*v->lock == Role::Subject ? "subject" : "subject's answer"),
+                       referenceSubject (doc.project) != nullptr && referenceSubject (doc.project) != c, false, [safe, voiceId, clipId]
+            {
+                if (safe == nullptr) return;
+                safe->doc.edit ([&] (Project& p)
+                {
+                    auto* vv = p.findVoice (voiceId);
+                    auto* cc = vv ? vv->findClip (clipId) : nullptr;
+                    if (cc == nullptr || ! vv->lock) return;
+                    Tick len = cc->length;
+                    auto notes = lockedLayerMaterial (p, voiceId, *vv->lock, cc->start, len, 0);
+                    if (! notes.empty()) { cc->notes = std::move (notes); cc->length = len; }
+                });
+            });
         m.addSeparator();
 
         m.addItem ("Generate exposition from this subject", ! c->notes.empty(), false, [safe, voiceId, clipId]
@@ -626,7 +694,7 @@ public:
             if (other.id == voiceId) continue;
             const int target = other.id;
             for (bool tonal : { true, false })
-                answer.addItem (other.name + (tonal ? "  (tonal)" : "  (real)"), ! c->notes.empty(), false, [safe, voiceId, clipId, target, tonal]
+                answer.addItem (other.name + (tonal ? "  (tonal)" : "  (real)"), ! c->notes.empty() && (! other.lock || other.lock == Role::Answer), false, [safe, voiceId, clipId, target, tonal]
                 {
                     if (safe == nullptr) return;
                     int newId = -1;
@@ -645,7 +713,7 @@ public:
                     });
                     safe->doc.select (target, newId);
                 });
-            counter.addItem (other.name, true, false, [safe, voiceId, clipId, target]
+            counter.addItem (other.name, ! other.lock || other.lock == Role::Countersubject, false, [safe, voiceId, clipId, target]
             {
                 if (safe == nullptr) return;
                 int newId = -1;
@@ -669,7 +737,7 @@ public:
         }
         m.addSubMenu ("Generate answer after this, in", answer);
         m.addSubMenu ("Generate countersubject against this, in", counter);
-        m.addItem ("Regenerate this clip's notes", ! c->isEntry(), false, [safe, voiceId, clipId]
+        m.addItem ("Regenerate this clip's notes", ! c->isEntry() && (! v->lock || v->lock == Role::Countersubject), false, [safe, voiceId, clipId]
         {
             if (safe == nullptr) return;
             safe->doc.edit ([&] (Project& p)
