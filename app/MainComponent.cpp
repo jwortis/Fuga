@@ -10,7 +10,7 @@ MainComponent::MainComponent()
     setWantsKeyboardFocus (true);
     getLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, theme::bg);
 
-    for (auto* b : { &playButton, &recordButton, &rewindButton, &metronomeButton, &generateButton, &addVoiceButton, &zoomOut, &zoomIn })
+    for (auto* b : { &scaleLockButton, &midiFilterButton, &loopButton, &playButton, &recordButton, &rewindButton, &metronomeButton, &generateButton, &addVoiceButton, &zoomOut, &zoomIn })
     {
         addAndMakeVisible (*b);
         b->setColour (juce::TextButton::buttonColourId, theme::panel.brighter (0.12f));
@@ -28,6 +28,9 @@ MainComponent::MainComponent()
     metronomeButton.setColour (juce::TextButton::buttonOnColourId, theme::accent.darker (0.3f));
     metronomeButton.setTooltip ("Metronome click during playback and recording");
     metronomeButton.onClick = [this] { engine.setMetronome (metronomeButton.getToggleState()); };
+    loopButton.setColour (juce::TextButton::buttonOnColourId, theme::accent.darker (0.3f));
+    loopButton.setTooltip ("Loop playback over a region (L). Drag along the bar ruler to set the region, or right-click the ruler for more.");
+    loopButton.onClick = [this] { toggleLoop(); };
     generateButton.setTooltip ("Build a full exposition from the selected subject clip: answers, countersubject and free counterpoint in every voice");
     generateButton.onClick = [this] { generateExpositionFromSelection (true); };
     addVoiceButton.onClick = [this] { addVoice(); };
@@ -60,16 +63,31 @@ MainComponent::MainComponent()
     };
 
     addAndMakeVisible (keyBox);
-    for (int i = 0; i < 24; ++i)
-        keyBox.addItem (keyName ({ i % 12, i < 12 ? Mode::Major : Mode::Minor }), i + 1);
-    keyBox.setWantsKeyboardFocus (false);
-    keyBox.onChange = [this]
+    addAndMakeVisible (scaleBox);
+    for (int i = 0; i < 12; ++i) keyBox.addItem (noteName (i), i + 1);
+    for (int i = 0; i < numModes; ++i)
+        scaleBox.addItem (juce::String (modeName ((Mode) i)).substring (0, 1).toUpperCase() + juce::String (modeName ((Mode) i)).substring (1), i + 1);
+    keyBox.setTooltip ("Tonic of the song's key");
+    scaleBox.setTooltip ("Scale of the song's key");
+    for (auto* box : { &keyBox, &scaleBox })
     {
-        const int i = keyBox.getSelectedId() - 1;
-        if (i < 0) return;
-        Key k { i % 12, i < 12 ? Mode::Major : Mode::Minor };
-        if (! (k == doc.project.key)) doc.edit ([&] (Project& p) { p.key = k; });
-    };
+        box->setWantsKeyboardFocus (false);
+        box->onChange = [this]
+        {
+            if (keyBox.getSelectedId() < 1 || scaleBox.getSelectedId() < 1) return;
+            Key k { keyBox.getSelectedId() - 1, (Mode) (scaleBox.getSelectedId() - 1) };
+            if (! (k == doc.project.key)) doc.edit ([&] (Project& p) { p.key = k; });
+        };
+    }
+    for (auto* b : { &scaleLockButton, &midiFilterButton })
+    {
+        b->setClickingTogglesState (true);
+        b->setColour (juce::TextButton::buttonOnColourId, theme::accent.darker (0.3f));
+    }
+    scaleLockButton.setTooltip ("Disable piano roll rows that are not in the scale, so notes can only be written and moved onto scale notes");
+    scaleLockButton.onClick = [this] { doc.edit ([&] (Project& p) { p.scaleLock = scaleLockButton.getToggleState(); }); };
+    midiFilterButton.setTooltip ("Ignore notes from your MIDI keyboard that are not in the scale");
+    midiFilterButton.onClick = [this] { doc.edit ([&] (Project& p) { p.midiScaleFilter = midiFilterButton.getToggleState(); }); };
 
     addAndMakeVisible (snapBox);
     for (int i = 0; i < 6; ++i) snapBox.addItem (snapNames[i], i + 1);
@@ -120,7 +138,7 @@ MainComponent::MainComponent()
     engine.syncProject (doc.project);
     engine.setLiveVoice (doc.selectedVoice);
     updateToolbar();
-    setSize (1320, 860);
+    setSize (1440, 880);
     startTimerHz (30);
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (this);
@@ -149,13 +167,21 @@ void MainComponent::resized()
     recordButton.setBounds (bar.removeFromLeft (70));
     bar.removeFromLeft (4);
     metronomeButton.setBounds (bar.removeFromLeft (52));
-    tempoLabel.setBounds (bar.removeFromLeft (52));
+    bar.removeFromLeft (4);
+    loopButton.setBounds (bar.removeFromLeft (52));
+    tempoLabel.setBounds (bar.removeFromLeft (48));
     tempo.setBounds (bar.removeFromLeft (96));
-    keyLabel.setBounds (bar.removeFromLeft (36));
-    keyBox.setBounds (bar.removeFromLeft (104));
-    snapLabel.setBounds (bar.removeFromLeft (42));
-    snapBox.setBounds (bar.removeFromLeft (112));
-    zoomLabel.setBounds (bar.removeFromLeft (46));
+    keyLabel.setBounds (bar.removeFromLeft (32));
+    keyBox.setBounds (bar.removeFromLeft (62));
+    bar.removeFromLeft (3);
+    scaleBox.setBounds (bar.removeFromLeft (142));
+    bar.removeFromLeft (4);
+    scaleLockButton.setBounds (bar.removeFromLeft (82));
+    bar.removeFromLeft (3);
+    midiFilterButton.setBounds (bar.removeFromLeft (84));
+    snapLabel.setBounds (bar.removeFromLeft (40));
+    snapBox.setBounds (bar.removeFromLeft (104));
+    zoomLabel.setBounds (bar.removeFromLeft (44));
     zoomOut.setBounds (bar.removeFromLeft (28));
     bar.removeFromLeft (2);
     zoomIn.setBounds (bar.removeFromLeft (28));
@@ -188,7 +214,11 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 void MainComponent::updateToolbar()
 {
     tempo.setValue (doc.project.bpm, juce::dontSendNotification);
-    keyBox.setSelectedId (doc.project.key.tonic + (doc.project.key.mode == Mode::Major ? 0 : 12) + 1, juce::dontSendNotification);
+    loopButton.setToggleState (doc.project.loopOn && doc.project.hasLoop(), juce::dontSendNotification);
+    keyBox.setSelectedId (doc.project.key.tonic + 1, juce::dontSendNotification);
+    scaleBox.setSelectedId ((int) doc.project.key.mode + 1, juce::dontSendNotification);
+    scaleLockButton.setToggleState (doc.project.scaleLock, juce::dontSendNotification);
+    midiFilterButton.setToggleState (doc.project.midiScaleFilter, juce::dontSendNotification);
     auto* c = doc.clip();
     generateButton.setEnabled (c != nullptr && ! c->notes.empty());
 
@@ -231,6 +261,8 @@ void MainComponent::timerCallback()
 
     const Tick t = engine.getPosition();
     const Tick bar = doc.project.barLength();
+    // The MIDI filter follows the key in force at the playhead (a section may be in another key).
+    engine.setInputScaleMask (doc.project.midiScaleFilter ? scaleMask (doc.project.keyAt (t)) : 0xfff);
     auto midi = engine.midiInputNames();
     status.setText ("Bar " + juce::String (t / bar + 1) + ", beat " + juce::String ((t % bar) / PPQ + 1)
                         + "      MIDI in: " + (midi.isEmpty() ? juce::String ("none connected (click the on-screen keyboard to play)") : midi.joinIntoString (", "))
@@ -250,7 +282,10 @@ void MainComponent::togglePlay()
     }
     else
     {
-        if (engine.getPosition() >= doc.project.endTime()) engine.setPosition (0);
+        auto& p = doc.project;
+        const Tick pos = engine.getPosition();
+        if (p.loopOn && p.hasLoop() && (pos < p.loopStart || pos >= p.loopEnd)) engine.setPosition (p.loopStart);
+        else if (pos >= p.endTime()) engine.setPosition (0);
         engine.play();
     }
 }
@@ -286,6 +321,7 @@ void MainComponent::stopAndCollectRecording()
         Clip c;
         c.id = newId = p.newId();
         c.role = hasSubject ? Role::Free : Role::Subject;
+        if (auto* lv = p.findVoice (voiceId); lv != nullptr && lv->lock) c.role = *lv->lock;
         c.start = (first / bar) * bar;
         c.length = std::max (bar, ((last - c.start + bar - 1) / bar) * bar);
         for (auto& n : recorded) c.notes.push_back ({ n.start - c.start, n.length, n.pitch, juce::jlimit (1, 127, n.velocity) });
@@ -313,6 +349,23 @@ void MainComponent::generateExpositionFromSelection (bool tonal)
         doc.undo();
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Generate exposition", result.error);
     }
+}
+
+void MainComponent::toggleLoop()
+{
+    auto& p = doc.project;
+    if (! p.hasLoop())
+    {
+        // No region yet: loop the selected clip, else the section under the playhead, else the first four bars.
+        if (auto* c = doc.clip()) { p.loopStart = c->start; p.loopEnd = c->end(); }
+        else if (auto* s = p.sectionAt (engine.getPosition())) { p.loopStart = s->start; p.loopEnd = s->end(); }
+        else { p.loopStart = 0; p.loopEnd = 4 * p.barLength(); }
+        p.loopOn = true;
+    }
+    else
+        p.loopOn = ! p.loopOn;
+    doc.dirty = true;
+    doc.changed();
 }
 
 void MainComponent::addVoice()
@@ -451,6 +504,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
     {
         m.addItem ("Undo", doc.canUndo(), false, [this] { doc.undo(); });
         m.addItem ("Redo", doc.canRedo(), false, [this] { doc.redo(); });
+        m.addSeparator();
+        m.addItem ("Duplicate clip    Cmd+D", doc.clip() != nullptr, false, [this] { timeline.duplicateSelectedClip(); });
+        m.addItem ("Loop on/off    L", true, doc.project.loopOn && doc.project.hasLoop(), [this] { toggleLoop(); });
     }
     else if (index == 2)
     {
@@ -480,6 +536,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress ('o', cmd, 0)) { open(); return true; }
     if (k == juce::KeyPress ('n', cmd, 0)) { newProject(); return true; }
     if (k == juce::KeyPress ('r', 0, 0)) { record(); return true; }
+    if (k == juce::KeyPress ('l', 0, 0)) { toggleLoop(); return true; }
+    if (k == juce::KeyPress ('d', cmd, 0)) { timeline.duplicateSelectedClip(); return true; }
     if (k == juce::KeyPress ('=', cmd, 0)) { setZoom (doc.pixelsPerBeat * 1.3); return true; }
     if (k == juce::KeyPress ('-', cmd, 0)) { setZoom (doc.pixelsPerBeat / 1.3); return true; }
     return false;
@@ -526,6 +584,51 @@ void MainComponent::selectedRowsChanged (int row)
 
 void MainComponent::runDemo()
 {
+    if (juce::JUCEApplication::getCommandLineParameters().contains ("--scale"))
+    {
+        doc.select (doc.project.voices[1].id, doc.project.voices[1].clips[0].id);
+        doc.edit ([&] (Project& p) { p.key.mode = Mode::HarmonicMinor; p.scaleLock = true; p.midiScaleFilter = true; });
+        doc.dirty = false;
+        return;
+    }
+    if (juce::JUCEApplication::getCommandLineParameters().contains ("--loop"))
+    {
+        doc.select (doc.project.voices[1].id, doc.project.voices[1].clips[0].id);
+        timeline.duplicateSelectedClip();
+        doc.project.loopStart = 4 * PPQ;
+        doc.project.loopEnd = 12 * PPQ;
+        doc.project.loopOn = true;
+        doc.changed();
+        doc.dirty = false;
+        return;
+    }
+    if (juce::JUCEApplication::getCommandLineParameters().contains ("--locks"))
+    {
+        // Three locked layers, each filled with its own kind of material, plus one broken answer.
+        doc.edit ([&] (Project& p)
+        {
+            p.voices[1].lock = Role::Subject;
+            p.voices[0].lock = Role::Answer;
+            p.voices[2].lock = Role::Countersubject;
+            auto add = [&] (size_t vi, Tick start, bool spoil)
+            {
+                Clip c;
+                c.id = p.newId();
+                c.role = *p.voices[vi].lock;
+                c.start = start;
+                c.length = 8 * PPQ;
+                c.notes = lockedLayerMaterial (p, p.voices[vi].id, c.role, c.start, c.length, 5);
+                if (spoil) c.notes[4].pitch += 2;
+                p.voices[vi].clips.push_back (c);
+            };
+            add (0, 8 * PPQ, false);
+            add (2, 8 * PPQ, false);
+            add (1, 16 * PPQ, false);
+            add (0, 24 * PPQ, true);
+        });
+        doc.dirty = false;
+        return;
+    }
     for (auto& v : doc.project.voices)
         for (auto& c : v.clips)
             if (c.role == Role::Subject)

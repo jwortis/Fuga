@@ -40,6 +40,7 @@ private:
     void save (bool saveAs, std::function<void()> then = {});
     void generateExpositionFromSelection (bool tonal);
     void addVoice();
+    void toggleLoop();
     void showAudioSettings();
     void showPluginManager();
     void setZoom (double pixelsPerBeat);
@@ -54,10 +55,12 @@ private:
     juce::ListBox problems;
     juce::Label problemsTitle, status;
     juce::MidiKeyboardComponent keyboard { engine.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard };
+    juce::TextButton loopButton { "Loop" };
     juce::TextButton playButton { "Play" }, recordButton { "Record" }, rewindButton { "|<" }, metronomeButton { "Click" };
     juce::TextButton generateButton { "Generate exposition" }, addVoiceButton { "+ Voice" }, zoomOut { "-" }, zoomIn { "+" };
     juce::Slider tempo;
-    juce::ComboBox keyBox, snapBox;
+    juce::ComboBox keyBox, scaleBox, snapBox;
+    juce::TextButton scaleLockButton { "Scale lock" }, midiFilterButton { "MIDI filter" };
     juce::Label tempoLabel, keyLabel, snapLabel, zoomLabel;
     juce::TooltipWindow tooltips { this, 600 };
     std::unique_ptr<juce::FileChooser> chooser;

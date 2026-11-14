@@ -38,6 +38,8 @@ public:
     /** The voice that live MIDI input plays. */
     void setLiveVoice (int voiceId) { liveVoice.store (voiceId); }
     void setMetronome (bool on) { metronome.store (on); }
+    /** Pitch classes accepted from MIDI devices (bit 0 = C). Pass 0xfff to let everything through. */
+    void setInputScaleMask (int mask) { inputMask.store (mask); }
 
     juce::String instrumentName (int voiceId) const;
     bool hasPlugin (int voiceId) const;
@@ -70,7 +72,7 @@ private:
     Track* findTrack (int voiceId) const;
     void loadInstrument (Track&, const std::string& desc, const std::string& state);
     void prepareTrack (Track&);
-    void processChunk (float* const* out, int numOut, int n);
+    void processChunk (float* const* out, int numOut, int offset, int n);
 
     juce::CriticalSection lock; // guards tracks and everything below, shared with the audio thread
     std::vector<std::unique_ptr<Track>> tracks;
@@ -81,6 +83,7 @@ private:
     int blockSize = 512;
     double bpm = 80.0;
     fuga::Tick endTick = 0;
+    fuga::Tick loopStart = 0, loopEnd = 0; // loopEnd <= loopStart means no loop
     int beatsPerBar = 4;
     bool cursorsValid = false, flushNotes = false;
     double clickPhase = 0, clickFreq = 0;
@@ -88,7 +91,7 @@ private:
 
     std::atomic<bool> playing { false }, recording { false }, metronome { false };
     std::atomic<double> position { 0.0 };
-    std::atomic<int> liveVoice { -1 };
+    std::atomic<int> liveVoice { -1 }, inputMask { 0xfff };
 
     struct RecEvent { double tick; int pitch, velocity; bool on; };
     juce::AbstractFifo recFifo { 8192 };

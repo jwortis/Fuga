@@ -28,7 +28,8 @@ public:
     {
         auto& p = doc.project;
         const auto area = g.getClipBounds();
-        const Key key = p.keyAt (engine.getPosition());
+        const Key key = doc.editKey();
+        const bool locked = p.scaleLock;
         auto* voice = doc.voice();
         auto* clip = doc.clip();
 
@@ -37,10 +38,17 @@ public:
             const int y = yForPitch (pitch);
             if (y > area.getBottom() || y + theme::rowHeight < area.getY()) continue;
             auto c = isBlackKey (pitch) ? theme::lane.darker (0.25f) : theme::lane;
-            if (! inScale (pitch, key)) c = c.darker (0.35f);
+            const bool out = ! inScale (pitch, key);
+            if (out) c = locked ? juce::Colour (0xff101014) : c.darker (0.35f);
             if (relPc (pitch, key) == 0) c = c.brighter (0.12f);
             g.setColour (c);
             g.fillRect (area.getX(), y, area.getWidth(), theme::rowHeight);
+            if (out && locked)
+            {
+                // Disabled row: a thin strike through the middle.
+                g.setColour (juce::Colours::white.withAlpha (0.05f));
+                g.fillRect (area.getX(), y + theme::rowHeight / 2 - 1, area.getWidth(), 1);
+            }
             g.setColour (theme::bg.withAlpha (0.6f));
             g.fillRect (area.getX(), y + theme::rowHeight - 1, area.getWidth(), 1);
         }
@@ -241,6 +249,9 @@ public:
             return;
         }
 
+        // With the scale lock on, rows outside the scale do not accept notes.
+        if (doc.project.scaleLock && ! inScale (pitchForY (e.y), doc.editKey())) return;
+
         // Write a new note, then keep dragging to set its length.
         doc.beginEdit();
         editBegun = true;
@@ -295,6 +306,7 @@ public:
             {
                 n.start = juce::jlimit<Tick> (0, std::max<Tick> (0, clip->length - doc.snap), doc.snapRound (o.start + delta, doc.snap));
                 n.pitch = juce::jlimit (theme::lowPitch, theme::highPitch, o.pitch + dPitch);
+                if (doc.project.scaleLock && dPitch != 0) n.pitch = snapToScale (n.pitch, doc.editKey(), dPitch);
             }
             else
             {
@@ -365,7 +377,10 @@ public:
                 {
                     auto& n = clip->notes[(size_t) i];
                     n.start = juce::jlimit<Tick> (0, std::max<Tick> (0, clip->length - doc.snap), n.start + dt);
-                    n.pitch = juce::jlimit (theme::lowPitch, theme::highPitch, n.pitch + dp);
+                    int target = n.pitch + dp;
+                    if (doc.project.scaleLock && dp != 0)
+                        target = std::abs (dp) == 1 ? scaleStep (n.pitch, doc.editKey(), dp) : snapToScale (target, doc.editKey(), dp);
+                    n.pitch = juce::jlimit (theme::lowPitch, theme::highPitch, target);
                 }
         });
     }
@@ -480,12 +495,13 @@ void PianoRollView::paint (juce::Graphics& g)
     g.fillAll (theme::panel);
     const int keyW = 54, x0 = theme::headerWidth - keyW;
     const int offset = viewport.getViewPositionY();
-    const Key key = doc.project.keyAt (engine.getPosition());
+    const Key key = doc.editKey();
     for (int pitch = theme::lowPitch; pitch <= theme::highPitch; ++pitch)
     {
         const int y = yForPitch (pitch) - offset;
         if (y > getHeight() || y + theme::rowHeight < 0) continue;
-        g.setColour (isBlackKey (pitch) ? juce::Colour (0xff2a2a2e) : juce::Colour (0xffd8d8dc));
+        const bool disabled = doc.project.scaleLock && ! inScale (pitch, key);
+        g.setColour ((isBlackKey (pitch) ? juce::Colour (0xff2a2a2e) : juce::Colour (0xffd8d8dc)).withMultipliedAlpha (disabled ? 0.25f : 1.0f));
         g.fillRect (x0, y, keyW, theme::rowHeight - 1);
         if (pitch % 12 == 0 || relPc (pitch, key) == 0)
         {

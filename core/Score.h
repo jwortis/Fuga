@@ -2,6 +2,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,9 @@ struct Voice
     float gain = 0.8f;
     std::string instrumentDesc;  // opaque: empty = built-in synth, else plugin description XML
     std::string instrumentState; // opaque: base64 plugin state
+    /** Role lock: when set, every clip in this layer has this role and must obey its constraint
+        (a subject layer only holds statements of the subject, an answer layer only answers, and so on). */
+    std::optional<Role> lock;
     std::vector<Clip> clips;
 
     Clip* findClip (int clipId)
@@ -54,7 +58,9 @@ struct Voice
     const Clip* findClip (int clipId) const { return const_cast<Voice*> (this)->findClip (clipId); }
 };
 
-enum class Mode { Major, Minor };
+/** The scale built on a key's tonic. Major and Minor (natural minor) come first so older files still load. */
+enum class Mode { Major, Minor, HarmonicMinor, MelodicMinor, Dorian, Phrygian, Lydian, Mixolydian, Locrian };
+constexpr int numModes = 9;
 
 struct Key
 {
@@ -83,6 +89,11 @@ struct Project
     std::vector<Voice> voices;
     std::vector<Section> sections;
     int nextId = 1;
+    bool loopOn = false;         // playback cycles over [loopStart, loopEnd)
+    Tick loopStart = 0, loopEnd = 0;
+    bool hasLoop() const { return loopEnd > loopStart; }
+    bool scaleLock = false;        // the piano roll only accepts notes of the scale
+    bool midiScaleFilter = false;  // notes outside the scale from a MIDI device are ignored
 
     int newId() { return nextId++; }
     Tick barLength() const { return PPQ * beatsPerBar; }

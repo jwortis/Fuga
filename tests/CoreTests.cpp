@@ -143,12 +143,68 @@ int main()
         c.notes = generateLine (p, p.voices[2].id, 0, 8 * PPQ, { seed, PPQ / 2, true });
         CHECK (! c.notes.empty());
         Tick covered = 0;
-        for (auto& n : c.notes) { covered += n.length; CHECK (inScale (n.pitch, p.key)); CHECK (n.pitch >= 48 && n.pitch <= 67); }
+        for (auto& n : c.notes) { covered += n.length; CHECK (inCounterpointScale (n.pitch, p.key)); CHECK (n.pitch >= 48 && n.pitch <= 67); }
         CHECK (covered == 8 * PPQ);
         p.voices[2].clips.push_back (c);
         auto vs = checkProject (p);
         CHECK (count (vs, "Parallel fifths") + count (vs, "Parallel octaves") == 0);
         CHECK (count (vs, "Voice crossing") == 0);
+    }
+
+    // --- Scales ---
+    {
+        Key dMinor { 2, Mode::Minor }, dHarmonic { 2, Mode::HarmonicMinor }, dDorian { 2, Mode::Dorian };
+        CHECK (inScale (60, dMinor) && ! inScale (61, dMinor));      // C natural yes, C# no
+        CHECK (! inScale (60, dHarmonic) && inScale (61, dHarmonic)); // the leading note replaces it
+        CHECK (inScale (59, dDorian) && ! inScale (58, dDorian));    // raised sixth
+        CHECK (inCounterpointScale (60, dMinor) && inCounterpointScale (61, dMinor));
+        CHECK (keyName (dHarmonic) == "D harmonic minor");
+        for (int m = 0; m < numModes; ++m)
+        {
+            int count = 0;
+            for (int pc = 0; pc < 12; ++pc) count += inScale (pc, { 0, (Mode) m });
+            CHECK (count == 7);
+        }
+        CHECK (scaleMask ({ 0, Mode::Major }) == 0b101010110101);
+        CHECK (snapToScale (61, dMinor, 0) == 60 && snapToScale (61, dMinor, 1) == 62 && snapToScale (62, dMinor, 1) == 62);
+        CHECK (scaleStep (62, dMinor, 1) == 64 && scaleStep (62, dMinor, -1) == 60 && scaleStep (61, dMinor, 1) == 62);
+    }
+
+    // --- Layer locks ---
+    {
+        Project p = satb();
+        p.voices[1].lock = Role::Subject;
+        p.voices[0].lock = Role::Answer;
+        p.voices[2].lock = Role::Countersubject;
+        p.voices[1].clips.push_back (clipOf (p, Role::Subject, 0, 8 * PPQ, demoSubject()));
+        CHECK (count (checkProject (p), "Layer lock") == 0);
+
+        // Material produced for locked layers satisfies the lock.
+        Tick len = 4 * PPQ;
+        auto ans = lockedLayerMaterial (p, p.voices[0].id, Role::Answer, 8 * PPQ, len, 1);
+        CHECK (len == 8 * PPQ && ! ans.empty());
+        p.voices[0].clips.push_back (clipOf (p, Role::Answer, 8 * PPQ, len, ans));
+        auto again = lockedLayerMaterial (p, p.voices[1].id, Role::Subject, 16 * PPQ, len, 1);
+        p.voices[1].clips.push_back (clipOf (p, Role::Subject, 16 * PPQ, len, transposed (again, 12)));
+        Tick csLen = 8 * PPQ;
+        auto cs = lockedLayerMaterial (p, p.voices[2].id, Role::Countersubject, 8 * PPQ, csLen, 3);
+        p.voices[2].clips.push_back (clipOf (p, Role::Countersubject, 8 * PPQ, csLen, cs));
+        CHECK (count (checkProject (p), "Layer lock") == 0);
+
+        // Breaking each lock is reported.
+        p.voices[0].clips[0].notes[3].pitch += 1;
+        CHECK (count (checkProject (p), "Layer lock") == 1);
+        p.voices[1].clips[1].notes[2].start += PPQ / 4;
+        CHECK (count (checkProject (p), "Layer lock") == 2);
+        p.voices[2].clips[0].start = 40 * PPQ; // no entry sounds there
+        CHECK (count (checkProject (p), "Layer lock") == 3);
+        p.voices[2].clips[0].role = Role::Free;
+        CHECK (count (checkProject (p), "Layer lock") == 3);
+
+        // A real answer is accepted too, and an exposition refuses to run over locked layers.
+        p.voices[0].clips[0].notes = fitToRange (makeAnswer (demoSubject(), p.key, false), 60, 81);
+        CHECK (count (checkProject (p), "Layer lock") == 2);
+        CHECK (! generateExposition (p, p.voices[1].id, p.voices[1].clips[0].id, true, 1).ok);
     }
 
     std::printf (failures == 0 ? "All core tests passed\n" : "%d failure(s)\n", failures);

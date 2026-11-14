@@ -215,6 +215,8 @@ void AudioEngine::syncProject (const Project& p)
         bpm = p.bpm;
         beatsPerBar = p.beatsPerBar;
         endTick = p.endTime();
+        loopStart = p.loopOn && p.hasLoop() ? p.loopStart : 0;
+        loopEnd = p.loopOn && p.hasLoop() ? p.loopEnd : 0;
         if (eventsChanged)
         {
             cursorsValid = false;
@@ -392,6 +394,9 @@ std::vector<AudioEngine::RecordedNote> AudioEngine::takeRecording()
 
 void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
 {
+    // Scale filter: drop note-ons outside the scale. Note-offs always pass so nothing can hang.
+    if (m.isNoteOn() && (inputMask.load() & (1 << (m.getNoteNumber() % 12))) == 0)
+        return;
     if (m.isNoteOnOrOff())
         keyboardState.processNextMidiEvent (m); // shows on the on-screen keyboard and reaches the collector
     else
@@ -414,18 +419,31 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int, fl
     collector.removeNextBlockOfMessages (liveMidi, numSamples);
 
     float* chans[2] = { out[0], out[numOut > 1 ? 1 : 0] };
+    const double ticksPerSample = bpm * (double) PPQ / (60.0 * sampleRate);
     for (int done = 0; done < numSamples;)
     {
-        const int n = juce::jmin (scratch.getNumSamples(), numSamples - done);
+        int n = juce::jmin (scratch.getNumSamples(), numSamples - done);
+
+        // When looping, end this chunk exactly on the loop end and jump back to the loop start.
+        const double pos = position.load();
+        const bool looping = playing.load() && ! recording.load() && loopEnd > loopStart && pos < (double) loopEnd;
+        if (looping)
+            n = juce::jlimit (1, n, (int) std::ceil (((double) loopEnd - pos) / ticksPerSample));
+
         float* offset[2] = { chans[0] + done, chans[1] + done };
-        // Live MIDI is applied in the first chunk only; chunks beyond the first are rare.
-        processChunk (offset, numOut > 1 ? 2 : 1, n);
-        liveMidi.clear();
+        processChunk (offset, numOut > 1 ? 2 : 1, done, n);
         done += n;
+
+        if (looping && playing.load() && position.load() >= (double) loopEnd)
+        {
+            position.store ((double) loopStart);
+            cursorsValid = false;
+            flushNotes = true;
+        }
     }
 }
 
-void AudioEngine::processChunk (float* const* out, int numOut, int n)
+void AudioEngine::processChunk (float* const* out, int numOut, int offset, int n)
 {
     const double ticksPerSample = bpm * (double) PPQ / (60.0 * sampleRate);
     const bool isPlaying = playing.load();
@@ -439,12 +457,12 @@ void AudioEngine::processChunk (float* const* out, int numOut, int n)
         for (const auto meta : liveMidi)
         {
             const auto m = meta.getMessage();
-            if (! m.isNoteOnOrOff()) continue;
+            if (! m.isNoteOnOrOff() || meta.samplePosition < offset || meta.samplePosition >= offset + n) continue;
             int s1, n1, s2, n2;
             recFifo.prepareToWrite (1, s1, n1, s2, n2);
             if (n1 + n2 > 0)
             {
-                recBuffer[(size_t) (n1 > 0 ? s1 : s2)] = { startTick + meta.samplePosition * ticksPerSample, m.getNoteNumber(), (int) m.getVelocity(), m.isNoteOn() };
+                recBuffer[(size_t) (n1 > 0 ? s1 : s2)] = { startTick + (meta.samplePosition - offset) * ticksPerSample, m.getNoteNumber(), (int) m.getVelocity(), m.isNoteOn() };
                 recFifo.finishedWrite (1);
             }
         }
@@ -458,7 +476,7 @@ void AudioEngine::processChunk (float* const* out, int numOut, int n)
             t.midi.addEvent (juce::MidiMessage::allNotesOff (1), 0);
             t.midi.addEvent (juce::MidiMessage::allSoundOff (1), 0);
         }
-        if (t.voiceId == live) t.midi.addEvents (liveMidi, 0, n, 0);
+        if (t.voiceId == live) t.midi.addEvents (liveMidi, offset, n, -offset);
 
         if (isPlaying)
         {
@@ -515,7 +533,7 @@ void AudioEngine::processChunk (float* const* out, int numOut, int n)
 
         position.store (endOfBlock);
         // Stop a bar after the last note, unless we are recording.
-        if (! recording.load() && endOfBlock > (double) (endTick + PPQ * beatsPerBar))
+        if (! recording.load() && endOfBlock > (double) (endTick + PPQ * beatsPerBar) && ! (loopEnd > loopStart && startTick < (double) loopEnd))
         {
             playing.store (false);
             flushNotes = true;

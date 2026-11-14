@@ -112,17 +112,21 @@ Project Document::makeDefaultProject()
 static const char* const roleIds[] = { "subject", "answer", "countersubject", "free" };
 static const char* const sectionIds[] = { "exposition", "episode", "middleEntry", "stretto", "pedal", "coda" };
 
+static const char* const modeIds[] = { "major", "minor", "harmonicMinor", "melodicMinor", "dorian", "phrygian", "lydian", "mixolydian", "locrian" };
+
 static juce::var keyToVar (Key k)
 {
     auto* o = new juce::DynamicObject();
     o->setProperty ("tonic", k.tonic);
-    o->setProperty ("mode", k.mode == Mode::Major ? "major" : "minor");
+    o->setProperty ("mode", modeIds[(int) k.mode]);
     return o;
 }
 
 static Key keyFromVar (const juce::var& v)
 {
-    return { juce::jlimit (0, 11, (int) v["tonic"]), v["mode"].toString() == "major" ? Mode::Major : Mode::Minor };
+    Mode mode = Mode::Minor;
+    for (int i = 0; i < numModes; ++i) if (v["mode"].toString() == modeIds[i]) mode = (Mode) i;
+    return { juce::jlimit (0, 11, (int) v["tonic"]), mode };
 }
 
 juce::String Document::toJson (const Project& p)
@@ -135,6 +139,11 @@ juce::String Document::toJson (const Project& p)
     root->setProperty ("beatsPerBar", p.beatsPerBar);
     root->setProperty ("key", keyToVar (p.key));
     root->setProperty ("nextId", p.nextId);
+    root->setProperty ("scaleLock", p.scaleLock);
+    root->setProperty ("midiScaleFilter", p.midiScaleFilter);
+    root->setProperty ("loopOn", p.loopOn);
+    root->setProperty ("loopStart", (juce::int64) p.loopStart);
+    root->setProperty ("loopEnd", (juce::int64) p.loopEnd);
 
     juce::Array<juce::var> voices;
     for (auto& v : p.voices)
@@ -149,6 +158,7 @@ juce::String Document::toJson (const Project& p)
         vo->setProperty ("gain", v.gain);
         vo->setProperty ("instrument", juce::String (v.instrumentDesc));
         vo->setProperty ("instrumentState", juce::String (v.instrumentState));
+        vo->setProperty ("lock", v.lock ? roleIds[(int) *v.lock] : "");
         juce::Array<juce::var> clips;
         for (auto& c : v.clips)
         {
@@ -198,6 +208,11 @@ bool Document::fromJson (const juce::String& text, Project& p)
     p.bpm = juce::jlimit (20.0, 300.0, (double) root["bpm"]);
     p.beatsPerBar = juce::jlimit (1, 12, (int) root["beatsPerBar"]);
     p.key = keyFromVar (root["key"]);
+    p.loopOn = root["loopOn"];
+    p.scaleLock = root["scaleLock"];
+    p.midiScaleFilter = root["midiScaleFilter"];
+    p.loopStart = std::max<Tick> (0, (juce::int64) root["loopStart"]);
+    p.loopEnd = std::max<Tick> (0, (juce::int64) root["loopEnd"]);
     int maxId = 0;
 
     if (auto* voices = root["voices"].getArray())
@@ -213,6 +228,7 @@ bool Document::fromJson (const juce::String& text, Project& p)
             v.gain = (float) (double) vv["gain"];
             v.instrumentDesc = vv["instrument"].toString().toStdString();
             v.instrumentState = vv["instrumentState"].toString().toStdString();
+            if (auto lock = vv["lock"].toString(); lock.isNotEmpty()) v.lock = (Role) indexOfId (roleIds, lock);
             maxId = std::max (maxId, v.id);
             if (auto* clips = vv["clips"].getArray())
                 for (auto& cv : *clips)

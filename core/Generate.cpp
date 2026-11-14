@@ -74,7 +74,7 @@ double melodicCost (int p0, int p1, Key key)
     int d = std::abs (p1 - p0);
     double cost = d == 0 ? 3 : d <= 2 ? 0 : d <= 4 ? 1.5 : d == 5 ? 2.5 : d == 7 ? 3.5 : d == 12 ? 4.5 : (d == 8 || d == 9) ? 6 : 20;
     if (d == 6) cost = 18;
-    if (key.mode == Mode::Minor)
+    if (isMinorMode (key.mode))
     {
         int r0 = relPc (p0, key), r1 = relPc (p1, key);
         if (r0 == 11 && p1 - p0 != 1) cost += 6;                  // leading note wants to rise
@@ -114,7 +114,7 @@ std::vector<Note> generateLine (const Project& project, int voiceId, Tick start,
     auto slots = makeRhythm (ctx, start, length, grid, rng);
 
     std::vector<int> pitches;
-    for (int p = voice.low; p <= voice.high; ++p) if (inScale (p, key)) pitches.push_back (p);
+    for (int p = voice.low; p <= voice.high; ++p) if (inCounterpointScale (p, key)) pitches.push_back (p);
     if (pitches.empty() || slots.empty()) return {};
 
     const size_t N = slots.size(), P = pitches.size();
@@ -196,9 +196,31 @@ std::vector<Note> generateLine (const Project& project, int voiceId, Tick start,
     return merged;
 }
 
+std::vector<Note> lockedLayerMaterial (const Project& p, int voiceId, Role lock, Tick start, Tick& length, unsigned seed)
+{
+    const Voice* v = p.findVoice (voiceId);
+    if (v == nullptr) return {};
+    if (lock == Role::Subject || lock == Role::Answer)
+    {
+        const Clip* subject = referenceSubject (p);
+        if (subject == nullptr) return {};
+        length = subject->length;
+        auto notes = lock == Role::Subject ? subject->notes : makeAnswer (subject->notes, p.keyAt (subject->start), true);
+        return fitToRange (std::move (notes), v->low, v->high);
+    }
+    return generateLine (p, voiceId, start, length, { seed, PPQ / 2, lock == Role::Countersubject });
+}
+
 ExpositionResult generateExposition (Project& p, int subjectVoiceId, int subjectClipId, bool tonalAnswer, unsigned seed)
 {
     ExpositionResult result;
+    for (auto& v : p.voices)
+        if (v.lock)
+        {
+            result.error = v.name + " is locked to " + roleName (*v.lock) + ". In an exposition every voice moves from subject or answer "
+                           "on to the countersubject, so unlock the layers first (right-click a layer name).";
+            return result;
+        }
     Voice* sv = p.findVoice (subjectVoiceId);
     Clip* sc = sv ? sv->findClip (subjectClipId) : nullptr;
     if (sc == nullptr || sc->notes.empty()) { result.error = "Select a clip that contains the subject first."; return result; }
